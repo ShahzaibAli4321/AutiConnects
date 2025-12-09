@@ -13,19 +13,18 @@ public class GameManager : MonoBehaviour
     public GameObject selectionGridPanel;
 
     [Header("Game Configuration")]
-    // All possible items in the game
     public Sprite[] allItemSprites;
     public ImageIdentity[] optionImages;
 
-    [Range(1, 5)] // Ensures the designer sets a reasonable max count in the Inspector
-    public int maxTargetCount = 3; // The maximum number of the target item that can appear
+    [Range(1, 5)]
+    public int maxTargetCount = 3;
 
     [Header("Narration Audio")]
     public AudioSource audioSource;
     public AudioClip introClip;
     public AudioClip successClip;
     public AudioClip failureClip;
-    public AudioClip partialSuccessClip; // New Clip: For when one correct item is selected, but more remain
+    public AudioClip partialSuccessClip;
 
     // Internal state
     private string targetItemName;
@@ -45,7 +44,6 @@ public class GameManager : MonoBehaviour
             Button button = option.GetComponent<Button>();
             if (button != null)
             {
-                // Assign a listener that calls CheckSelection with this specific ImageIdentity
                 button.onClick.AddListener(() => CheckSelection(option));
             }
         }
@@ -61,8 +59,8 @@ public class GameManager : MonoBehaviour
     void SetupRound()
     {
         SetOptionsInteractable(false);
-        foundTargetCount = 0; // Reset count for the new round
-        totalTargetCount = 0; // Reset total count
+        foundTargetCount = 0;
+        totalTargetCount = 0;
 
         if (selectionGridPanel != null)
         {
@@ -75,11 +73,31 @@ public class GameManager : MonoBehaviour
         referenceImage.gameObject.SetActive(true);
         targetItemName = targetSprite.name;
 
-        // 2. Determine the required number of items for this round (between 1 and maxTargetCount)
+        // 2. Determine the required number of items for this round
         int requiredTargetCount = Random.Range(1, maxTargetCount + 1);
         totalTargetCount = requiredTargetCount;
 
         // 3. Prepare the Selection Pool
+
+        // --- FIX IMPLEMENTATION START ---
+        // Create a list of all sprites *excluding* the current target for decoys.
+        List<Sprite> decoySprites = new List<Sprite>();
+        foreach (Sprite s in allItemSprites)
+        {
+            if (s.name != targetItemName)
+            {
+                decoySprites.Add(s);
+            }
+        }
+
+        if (decoySprites.Count == 0 && allItemSprites.Length > 1)
+        {
+            // This error check should only happen if all sprite names are identical, 
+            // which is a configuration error if maxTargetCount > 1.
+            Debug.LogError("Setup Error: Need at least one unique sprite for decoys.");
+            return;
+        }
+
         List<Sprite> selectionPool = new List<Sprite>();
 
         // Add the required number of correct answers (Targets)
@@ -88,12 +106,14 @@ public class GameManager : MonoBehaviour
             selectionPool.Add(targetSprite);
         }
 
-        // Fill the rest with random decoys
+        // Fill the rest with random decoys (guaranteed not to be the target sprite)
         int remainingSlots = optionImages.Length - requiredTargetCount;
         for (int i = 0; i < remainingSlots; i++)
         {
-            selectionPool.Add(allItemSprites[Random.Range(0, allItemSprites.Length)]);
+            // Draw from the filtered decoySprites list
+            selectionPool.Add(decoySprites[Random.Range(0, decoySprites.Count)]);
         }
+        // --- FIX IMPLEMENTATION END ---
 
         // 4. Shuffle the Pool
         Shuffle(selectionPool);
@@ -102,91 +122,68 @@ public class GameManager : MonoBehaviour
         for (int i = 0; i < optionImages.Length; i++)
         {
             optionImages[i].SetContent(selectionPool[i], selectionPool[i].name);
-            // Ensure all option images are visible (they will be hidden by the parent panel)
             optionImages[i].gameObject.SetActive(true);
         }
 
         // 6. Start Narration
-        string instructionText = $"Find all {totalTargetCount} of the {targetItemName}!";
+        string instructionText = $"Find all of the {targetItemName}!";
         PlayNarration(instructionText, introClip);
 
-        // 7. Start the coroutine to hide the reference image and SHOW the options grid
+        // 7. Start the coroutine
         StartCoroutine(HideReferenceImageAndEnableOptions(introClip.length));
     }
 
-    // UPDATED CheckSelection method signature to take the ImageIdentity object
     public void CheckSelection(ImageIdentity clickedObject)
     {
-        // Check if the game is currently allowing interaction
         if (!clickedObject.GetComponent<Button>().interactable)
             return;
 
-        // Stop the HideReferenceImage coroutine immediately
         StopAllCoroutines();
 
         if (clickedObject.itemName == targetItemName)
         {
-            // --- CORRECT SELECTION ---
             foundTargetCount++;
-
-            // 1. Visually remove the found item
             clickedObject.gameObject.SetActive(false);
-
-            // 2. Disable all buttons temporarily for feedback
             SetOptionsInteractable(false);
 
             if (foundTargetCount == totalTargetCount)
             {
-                // --- FINAL CORRECT SELECTION (Round Complete) ---
                 referenceImage.gameObject.SetActive(false);
                 PlayNarration("You found them all! Excellent job!", successClip);
                 StartCoroutine(NextRoundAfterDelay(successClip.length));
             }
             else
             {
-                // --- PARTIAL SUCCESS ---
                 PlayNarration($"Found one! Only {totalTargetCount - foundTargetCount} more to go!", partialSuccessClip);
-                // Re-enable options after the partial success feedback audio plays
                 StartCoroutine(ReEnableOptionsAfterDelay(partialSuccessClip.length));
             }
         }
         else
         {
-            // --- INCORRECT SELECTION ---
-            SetOptionsInteractable(false); // Disable all buttons
+            SetOptionsInteractable(false);
             PlayNarration("Oops, that's not the right one. Try again!", failureClip);
-
-            // Re-enable options after the failure audio
             StartCoroutine(ReEnableOptionsAfterDelay(failureClip.length));
         }
     }
 
-    // Coroutine: Hides the reference image and ACTIVATES the selection grid
     IEnumerator HideReferenceImageAndEnableOptions(float delayTime)
     {
         yield return new WaitForSeconds(delayTime + 0.5f);
-
-        // 1. Hide the ReferenceImage
         referenceImage.gameObject.SetActive(false);
 
-        // 2. ACTIVATE the entire selection grid GameObject
         if (selectionGridPanel != null)
         {
             selectionGridPanel.SetActive(true);
         }
-
-        // 3. ENABLE the selection options so the player can click
         SetOptionsInteractable(true);
     }
 
-    // Coroutine: Delays and then starts the next round
     IEnumerator NextRoundAfterDelay(float delayTime)
     {
         yield return new WaitForSeconds(delayTime + 0.5f);
         SetupRound();
     }
 
-    // Coroutine: Delays and then re-enables options after a failed attempt or partial success
     IEnumerator ReEnableOptionsAfterDelay(float delayTime)
     {
         yield return new WaitForSeconds(delayTime + 0.2f);
@@ -198,7 +195,7 @@ public class GameManager : MonoBehaviour
         foreach (ImageIdentity option in optionImages)
         {
             Button button = option.GetComponent<Button>();
-            if (button != null && option.gameObject.activeSelf) // Only affect active options
+            if (button != null && option.gameObject.activeSelf)
             {
                 button.interactable = isInteractable;
             }
@@ -215,7 +212,6 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // Simple List Shuffler (Fisher-Yates)
     private void Shuffle<T>(List<T> list)
     {
         int n = list.Count;
